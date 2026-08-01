@@ -84,8 +84,10 @@ export function useMapInit({
   }, []);
 
   // ---- 主题切换 ----
+  // val 取值：'day' | 'night' | 'high-contrast'（见 types/index.ts ThemeMode）
   const toggleDark = useCallback((val: string) => {
-    mapRef.current?.setStyle(getMapStyle(val === 'dark'));
+    const isDark = val === 'night' || val === 'high-contrast';
+    mapRef.current?.setStyle(getMapStyle(isDark));
   }, []);
 
   // ---- 飞到坐标 ----
@@ -106,7 +108,8 @@ export function useMapInit({
       pitch: 45,
       bearing: -17.6,
 
-      style: getMapStyle(theme === 'dark'),
+      // theme 取值：'day' | 'night' | 'high-contrast'
+      style: getMapStyle(theme === 'night' || theme === 'high-contrast'),
     });
 
     map.addControl(new NavigationControl(), 'top-right');

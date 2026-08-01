@@ -13,7 +13,7 @@ import maplibregl, { Map } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import DeckGL from '@deck.gl/react';
 import { MapViewState } from '@deck.gl/core';
-import { ScatterplotLayer, LineLayer } from '@deck.gl/layers';
+import { ScatterplotLayer } from '@deck.gl/layers';
 
 // ============================================================
 // 第一步：生成海量模拟数据
@@ -21,12 +21,6 @@ import { ScatterplotLayer, LineLayer } from '@deck.gl/layers';
 // ============================================================
 function generateMassiveData(count: number) {
   const data: { longitude: number; latitude: number; value: number }[] = [];
-  const BOUNDS = {
-    minLng: 73.0,
-    maxLng: 135.0,
-    minLat: 4.0,
-    maxLat: 53.0,
-  };
   for (let i = 0; i < count; i++) {
     data.push({
       // 北京范围：经度 115.4 ~ 117.5，纬度 39.4 ~ 41.1
@@ -60,9 +54,12 @@ function createDeckLayers(data: ReturnType<typeof generateMassiveData>) {
       data,
       // 半径映射：把随机值映射到 100~500 米范围
       radiusScale: 50,
-      getPosition: (d) => [d.longitude, d.latitude],
-      getRadius: (d) => 100 + d.value * 4,
-      getFillColor: (d) => {
+      getPosition: (d: { longitude: number; latitude: number; value: number }) => [
+        d.longitude,
+        d.latitude,
+      ],
+      getRadius: (d: { longitude: number; latitude: number; value: number }) => 100 + d.value * 4,
+      getFillColor: (d: { longitude: number; latitude: number; value: number }) => {
         // 绿色 → 黄色 → 红色  热力图颜色渐变
         const v = d.value;
         return [Math.floor(v * 255), Math.floor((1 - v) * 255), 60, 180];
@@ -73,8 +70,9 @@ function createDeckLayers(data: ReturnType<typeof generateMassiveData>) {
       getLineWidth: 1,
       // ⚠️ 关键性能参数：把点合并到一个绘制调用
       // 减少 GPU draw call，50,000 个点也能 60fps
+      // （`_instanced` 为 deck.gl 内部实验性参数，TS 类型未收录，故断言 any）
       _instanced: true,
-    }),
+    } as any),
   ];
 }
 
@@ -228,7 +226,6 @@ const MaplibreWithDeckGL = () => {
 // ============================================================
 const MapBigDataDemo = () => {
   const [mode, setMode] = useState<'pure-deck' | 'maplibre-deck'>('pure-deck');
-  const [showFps, setShowFps] = useState(false);
 
   return (
     <div style={{ width: '100%', height: '85vh', position: 'relative' }}>

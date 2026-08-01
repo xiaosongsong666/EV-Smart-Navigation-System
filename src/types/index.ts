@@ -1,87 +1,35 @@
-export interface EmotionEntry {
-  id: string;
-  date: string;
-  emotion: EmotionType;
-  intensity: number;
-  content: string;
-  voiceUrl?: string;
-  tags: string[];
-  weather?: string;
-  activities?: string[];
-  mood: number; // 1-10 scale
-  createdAt: Date;
-  updatedAt: Date;
-}
+/**
+ * 🚗 下一代车载 EV 智能导航系统 — 全局类型定义
+ *
+ * 历史说明：
+ *  - src/types/map.ts 存放地图相关的 BBox / Viewport 类型
+ *  - 本文件存放业务类型（设置 / 偏好等）
+ */
 
-export type EmotionType = 'happy' | 'sad' | 'angry' | 'anxious' | 'calm' | 'excited' | 'neutral';
+/** 地图主题模式 */
+export type ThemeMode = 'day' | 'night' | 'high-contrast';
 
-export interface MeditationSession {
-  id: string;
-  date: string;
-  duration: number; // in minutes
-  type: MeditationType;
-  completed: boolean;
-  notes?: string;
-  createdAt: Date;
-}
+/** 距离单位 */
+export type Units = 'metric' | 'imperial';
 
-export type MeditationType =
-  'breathing' | 'mindfulness' | 'loving-kindness' | 'body-scan' | 'walking';
+/** 界面语言 */
+export type Language = 'zh' | 'en';
 
-export interface UserSettings {
-  theme: 'light' | 'dark' | 'auto';
-  language: 'zh-CN' | 'en-US';
-  notifications: boolean;
-  reminderTime: string;
-  privacyLevel: 'public' | 'private' | 'friends';
-}
+/** 驾驶模式 */
+export type DrivingMode = 'eco' | 'normal' | 'sport';
 
-export interface AnalyticsData {
-  emotionTrends: EmotionTrend[];
-  weeklyMood: WeeklyMood[];
-  meditationStats: MeditationStats;
-  insights: Insight[];
-}
-
-export interface EmotionTrend {
-  date: string;
-  emotions: Record<EmotionType, number>;
-  averageMood: number;
-}
-
-export interface WeeklyMood {
-  week: string;
-  averageMood: number;
-  dominantEmotion: EmotionType;
-  entriesCount: number;
-}
-
-export interface MeditationStats {
-  totalSessions: number;
-  totalMinutes: number;
-  averageDuration: number;
-  completionRate: number;
-  favoriteType: MeditationType;
-}
-
-export interface Insight {
-  id: string;
-  type: 'mood' | 'emotion' | 'meditation' | 'pattern';
-  title: string;
-  description: string;
-  date: string;
-  actionable: boolean;
-  actionText?: string;
-}
-
-export interface VoiceRecognitionState {
-  isListening: boolean;
-  transcript: string;
-  error: string | null;
-}
-
-export interface CameraState {
-  isActive: boolean;
-  photo: string | null;
-  error: string | null;
+/** 应用偏好设置（模块八：设置与偏好系统） */
+export interface AppSettings {
+  /** 距离单位：公里/英里 */
+  units: Units;
+  /** 地图主题：白天/夜间/高对比度 */
+  theme: ThemeMode;
+  /** 界面语言：中文/英文 */
+  language: Language;
+  /** 电量焦虑触发阈值（%），默认 20 —— 电量低于此值触发充电提醒 */
+  anxietyThreshold: number;
+  /** 默认驾驶模式 */
+  defaultDrivingMode: DrivingMode;
+  /** 导航语音提示开关 */
+  voicePromptEnabled: boolean;
 }

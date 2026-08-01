@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -10,12 +10,14 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
-import { useAppStore } from '../../store';
+import { useSettingsStore } from '../../store';
 import Mapliber, { type MapliberHandle } from '../../pages/mapliberModel';
 
-interface LayoutProps {
-  children: React.ReactNode;
-}
+/**
+ * 说明：页面（如 MapView / 路径规划）以「全屏覆盖层」的形式渲染，
+ * 因此 Layout 不直接渲染 children，这里不再接收该 prop。
+ */
+interface LayoutProps {}
 
 const NAV_ITEMS = [
   { path: '/', icon: Map, label: '地图引擎' },
@@ -24,15 +26,23 @@ const NAV_ITEMS = [
   { path: '/settings', icon: Settings, label: '设置' },
 ];
 
-const Layout: React.FC<LayoutProps> = ({ children }) => {
+const Layout: React.FC<LayoutProps> = () => {
   const location = useLocation();
-  const { settings, updateSettings } = useAppStore();
+  const theme = useSettingsStore((s) => s.settings.theme);
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
   const mapRef = useRef<MapliberHandle>(null);
 
+  /**
+   * 地图主题跟随设置同步：
+   * 无论主题是从顶部按钮切换，还是在设置页修改，这里都会统一生效。
+   */
+  useEffect(() => {
+    mapRef.current?.toggleDark(theme);
+  }, [theme]);
+
   const toggleTheme = () => {
-    const newTheme = settings.theme === 'light' ? 'dark' : 'light';
+    const newTheme = theme === 'day' ? 'night' : 'day';
     updateSettings({ theme: newTheme });
-    mapRef.current?.toggleDark(newTheme);
   };
 
   return (
@@ -42,7 +52,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <Mapliber
           ref={mapRef}
           style={{ width: '100%', height: 'calc(100vh - 8rem)', marginTop: '4rem' }}
-          theme={settings.theme}
+          theme={theme}
         />
       </div>
 
@@ -68,7 +78,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               onClick={toggleTheme}
               className="p-2 rounded-lg glass-effect hover:bg-white/20 transition-colors"
             >
-              {settings.theme === 'light' ? (
+              {theme === 'day' ? (
                 <Sun className="w-5 h-5 text-gray-300" />
               ) : (
                 <Moon className="w-5 h-5 text-gray-600" />
@@ -77,13 +87,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </div>
       </header>
-
-      {/* ===== 页面内容 ===== */}
-      <main className="relative z-10 pointer-events-none">
-        <div className="max-w-[120px] px-4 sm:px-6 lg:px-8 py-8 pointer-events-auto">
-          {/* {children} */}
-        </div>
-      </main>
 
       {/* ===== 底部导航栏 ===== */}
       <nav className="fixed bottom-0 left-0 right-0 z-20 glass-effect border-t border-white/20 backdrop-blur-md">

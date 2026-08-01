@@ -1,7 +1,7 @@
 {
-  "name": "emotion-diary-platform",
+  "name": "ev-smart-navigation-system",
   "version": "1.0.0",
-  "description": "智能情绪管理工具 - 语音文字混合日记平台",
+  "description": "下一代车载 EV 智能导航系统 - React 18 + MapLibre GL JS + Deck.gl + Valhalla",
   "main": "index.js",
   "scripts": {
     "dev": "vite",
@@ -16,8 +16,6 @@
     "3d-tiles-renderer": "^0.4.28",
     "antd": "^6.5.2",
     "autoprefixer": "^10.4.14",
-    "chart.js": "^4.2.1",
-    "date-fns": "^2.29.3",
     "deck.gl": "^9.3.6",
     "framer-motion": "^10.12.0",
     "lucide-react": "^0.263.1",
@@ -25,12 +23,8 @@
     "maplibre-gl-draw": "^1.6.9",
     "postcss": "^8.4.24",
     "react": "^18.2.0",
-    "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.2.0",
-    "react-hook-form": "^7.43.9",
     "react-router-dom": "^6.30.4",
-    "react-speech-recognition": "^3.10.0",
-    "react-webcam": "^7.1.1",
     "tailwindcss": "^3.3.0",
     "three": "^0.185.1",
     "zustand": "^4.3.8"
@@ -49,12 +43,14 @@
     "vite": "^4.3.0"
   },
   "keywords": [
-    "emotion",
-    "diary",
-    "visualization",
-    "mental-health",
-    "meditation"
+    "ev",
+    "navigation",
+    "maplibre",
+    "deck.gl",
+    "valhalla",
+    "in-vehicle",
+    "gis"
   ],
-  "author": "Emotion Diary Team",
+  "author": "",
   "license": "MIT"
 }
