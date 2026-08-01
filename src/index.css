@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   全局基础样式
+   ============================================ */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    min-height: 100vh;
+    background-image: linear-gradient(to bottom right, #faf5ff, #eff6ff);
+  }
+
+  /* 暗色模式（class 模式：<html class="dark">） */
+  .dark body {
+    background-image: linear-gradient(to bottom right, #111827, #1f2937);
+  }
+}
+
+/* ============================================
+   组件级样式
+   ============================================ */
+@layer components {
+  /* ----- 毛玻璃效果 ----- */
+  .glass-effect {
+    background-color: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  /* ----- 页面主容器 ----- */
+  .app-container {
+    min-height: 100vh;
+    background-image: linear-gradient(to bottom right, #faf5ff, #eff6ff);
+  }
+  .dark .app-container {
+    background-image: linear-gradient(to bottom right, #111827, #1f2937);
+  }
+
+  /* ----- 情绪卡片 ----- */
+  .emotion-card {
+    transition: all 300ms ease;
+  }
+  .emotion-card:hover {
+    transform: scale(1.05);
+    box-shadow:
+      0 10px 15px -3px rgba(0, 0, 0, 0.1),
+      0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  }
+
+  /* ----- 呼吸动画圆圈 ----- */
+  .breathing-circle {
+    animation: breath 4s ease-in-out infinite;
+  }
+
+  /* ----- 冥想背景 ----- */
+  .meditation-bg {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  /* ----- 日记卡片 ----- */
+  .diary-entry {
+    background-color: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  }
+
+  /* ----- 情绪按钮 ----- */
+  .emotion-button {
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    border: none;
+    cursor: pointer;
+    transition: all 200ms ease;
+    font-size: inherit;
+  }
+  .emotion-button:hover {
+    transform: scale(1.1);
+  }
+
+  /* ----- 情绪颜色 ----- */
+  .emotion-happy {
+    background-color: #fbbf24;
+    color: white;
+  }
+  .emotion-sad {
+    background-color: #60a5fa;
+    color: white;
+  }
+  .emotion-angry {
+    background-color: #ef4444;
+    color: white;
+  }
+  .emotion-anxious {
+    background-color: #8b5cf6;
+    color: white;
+  }
+  .emotion-calm {
+    background-color: #10b981;
+    color: white;
+  }
+  .emotion-excited {
+    background-color: #f97316;
+    color: white;
+  }
+}
+
+/* ============================================
+   工具类
+   ============================================ */
+@layer utilities {
+  /* ----- 渐变色文字 ----- */
+  .text-gradient {
+    background-image: linear-gradient(to right, #9333ea, #2563eb);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* ----- 发光阴影 ----- */
+  .shadow-glow {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+}
