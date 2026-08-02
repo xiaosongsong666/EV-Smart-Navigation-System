@@ -26,9 +26,12 @@ export function addRoadLayers(map: maplibregl.Map) {
       'line-color': [
         'match',
         ['get', 'class'],
-        'motorway', '#FF6B35',
-        'primary', '#FFB347',
-        'secondary', '#FFD700',
+        'motorway',
+        '#FF6B35',
+        'primary',
+        '#FFB347',
+        'secondary',
+        '#FFD700',
         '#CCCCCC',
       ],
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 15, 8, 18, 15],
@@ -113,9 +116,15 @@ export function addLineLayer(map: maplibregl.Map) {
     layout: { 'line-join': 'round', 'line-cap': 'round' },
     paint: {
       'line-color': [
-        'match', ['get', 'class'],
-        'motorway', '#FF6B35', 'primary', '#FFB347',
-        'secondary', '#FFD700', '#CCCCCC',
+        'match',
+        ['get', 'class'],
+        'motorway',
+        '#FF6B35',
+        'primary',
+        '#FFB347',
+        'secondary',
+        '#FFD700',
+        '#CCCCCC',
       ],
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 15, 8, 18, 15],
     },
@@ -149,30 +158,44 @@ export function addPolygonLayer(map: maplibregl.Map) {
       properties: { name: '矩形区域' },
       geometry: {
         type: 'Polygon',
-        coordinates: [[
-          [116.355, 39.895], [116.385, 39.895],
-          [116.385, 39.92], [116.355, 39.92],
-          [116.355, 39.895],
-        ]],
+        coordinates: [
+          [
+            [116.355, 39.895],
+            [116.385, 39.895],
+            [116.385, 39.92],
+            [116.355, 39.92],
+            [116.355, 39.895],
+          ],
+        ],
       },
     },
   });
   map.addLayer({
-    id: 'layer-polygon-fill', type: 'fill', source: 'source-polygon',
+    id: 'layer-polygon-fill',
+    type: 'fill',
+    source: 'source-polygon',
     paint: { 'fill-color': '#3388ff', 'fill-opacity': 0.35 },
   });
   map.addLayer({
-    id: 'layer-polygon-outline', type: 'line', source: 'source-polygon',
+    id: 'layer-polygon-outline',
+    type: 'line',
+    source: 'source-polygon',
     paint: { 'line-color': '#3388ff', 'line-width': 3 },
   });
   map.addLayer({
-    id: 'layer-polygon-label', type: 'symbol', source: 'source-polygon',
+    id: 'layer-polygon-label',
+    type: 'symbol',
+    source: 'source-polygon',
     layout: {
-      'text-field': ['get', 'name'], 'text-offset': [0, -1.5],
-      'text-anchor': 'bottom', 'text-size': 14,
+      'text-field': ['get', 'name'],
+      'text-offset': [0, -1.5],
+      'text-anchor': 'bottom',
+      'text-size': 14,
     },
     paint: {
-      'text-color': '#3388ff', 'text-halo-color': '#ffffff', 'text-halo-width': 2,
+      'text-color': '#3388ff',
+      'text-halo-color': '#ffffff',
+      'text-halo-width': 2,
     },
   });
 }
@@ -188,11 +211,15 @@ export function add3dBuildingLayer(map: maplibregl.Map) {
       properties: { name: '三维大楼', height: 300 },
       geometry: {
         type: 'Polygon',
-        coordinates: [[
-          [116.448, 39.898], [116.462, 39.898],
-          [116.462, 39.91], [116.448, 39.91],
-          [116.448, 39.898],
-        ]],
+        coordinates: [
+          [
+            [116.448, 39.898],
+            [116.462, 39.898],
+            [116.462, 39.91],
+            [116.448, 39.91],
+            [116.448, 39.898],
+          ],
+        ],
       },
     },
   });
@@ -209,13 +236,18 @@ export function add3dBuildingLayer(map: maplibregl.Map) {
   });
   map.addLayer({
     id: 'layer-3d-label',
-    type: 'symbol', source: 'source-3d',
+    type: 'symbol',
+    source: 'source-3d',
     layout: {
-      'text-field': ['get', 'name'], 'text-offset': [0, -2.5],
-      'text-anchor': 'bottom', 'text-size': 14,
+      'text-field': ['get', 'name'],
+      'text-offset': [0, -2.5],
+      'text-anchor': 'bottom',
+      'text-size': 14,
     },
     paint: {
-      'text-color': '#ff66cc', 'text-halo-color': '#ffffff', 'text-halo-width': 2,
+      'text-color': '#ff66cc',
+      'text-halo-color': '#ffffff',
+      'text-halo-width': 2,
     },
   });
 }

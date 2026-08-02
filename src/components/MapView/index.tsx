@@ -9,6 +9,8 @@ import { useMapInit, type LayerStateMap } from './useMapInit';
 interface MapViewProps {
   style?: React.CSSProperties;
   theme?: string;
+  /** 是否显示图层面板（仅「地图引擎」模块 / 路由下显示） */
+  showLayerPanel?: boolean;
 }
 
 export interface MapliberHandle {
@@ -78,16 +80,18 @@ const MapView = forwardRef<MapliberHandle, MapViewProps>((props, ref) => {
       {/* 地图容器 */}
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 
-      {/* 图层面板 */}
-      <LayerPanel
-        config={LAYER_CONFIG}
-        states={layerStates}
-        onToggle={handleToggle}
-        onSetOpacity={handleOpacity}
-        groups={PANEL_GROUPS}
-        open={panelOpen}
-        onClose={() => setPanelOpen(!panelOpen)}
-      />
+      {/* 图层面板（仅地图引擎模块显示） */}
+      {props.showLayerPanel !== false && (
+        <LayerPanel
+          config={LAYER_CONFIG}
+          states={layerStates}
+          onToggle={handleToggle}
+          onSetOpacity={handleOpacity}
+          groups={PANEL_GROUPS}
+          open={panelOpen}
+          onClose={() => setPanelOpen(!panelOpen)}
+        />
+      )}
     </div>
   );
 });

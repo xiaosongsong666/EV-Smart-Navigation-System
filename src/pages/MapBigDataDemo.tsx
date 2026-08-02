@@ -1,336 +1,238 @@
 /**
- * ============================================================
- *  📍 deck.gl 大数据渲染演示组件
- *  --------------------------------
- *  学习目标：
- *    1. 理解为什么 MapLibre 原生图层在处理海量数据时会卡顿
- *    2. 学会用 deck.gl 的 GPU 渲染来解决大数据性能问题
- *    3. 掌握 deck.gl 与 MapLibre 集成的两种方式
- * ============================================================
+ * 📍 海量 POI 模块（路由 /bigdata）
+ *
+ * 在公用地图的 Deck.gl 层上做四种渲染模式切换：
+ *  - 散点   ScatterplotLayer（GPU 逐个渲染）
+ *  - 六边形 HexagonLayer（蜂窝聚合）
+ *  - 网格   CPUGridLayer（网格聚合）
+ *  - 点聚类 supercluster（按 zoom 自动合并，带数量文字）
+ *
+ * 模块挂载时接管共享 overlay 图层，卸载时恢复基准图层。
  */
-import React, { useEffect, useRef, useState } from 'react';
-import maplibregl, { Map } from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
-import DeckGL from '@deck.gl/react';
-import { MapViewState } from '@deck.gl/core';
-import { ScatterplotLayer } from '@deck.gl/layers';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Supercluster from 'supercluster';
+import { useMapStore } from '../store';
+import { generateMassiveData } from '../utils/dataGenerator';
+import {
+  createScatterDisplayLayer,
+  createHexagonLayer,
+  createGridLayer,
+  createClusterLayers,
+  type ClusterPoint,
+} from '../layers/createAggregationLayers';
 
-// ============================================================
-// 第一步：生成海量模拟数据
-// 我们用北京区域随机生成 50,000 个点
-// ============================================================
-function generateMassiveData(count: number) {
-  const data: { longitude: number; latitude: number; value: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    data.push({
-      // 北京范围：经度 115.4 ~ 117.5，纬度 39.4 ~ 41.1
-      longitude: 115.4 + Math.random() * 2.1,
-      latitude: 39.4 + Math.random() * 1.7,
-      // longitude: BOUNDS.minLng + Math.random() * (BOUNDS.maxLng - BOUNDS.minLng),
-      // latitude: BOUNDS.maxLat +  Math.random() * (BOUNDS.maxLat - BOUNDS.minLat),
-      value: Math.random(), // 随机值，用来映射颜色
-    });
-  }
-  return data;
-}
+type AggMode = 'none' | 'hexagon' | 'grid' | 'cluster';
 
-// ============================================================
-// 第二步：定义 deck.gl 图层
-//
-// ScatterplotLayer —— deck.gl 的散点图层
-// 它的特点是：
-//  - 用 GPU (WebGL) 绘制，上万数据丝毫不卡
-//  - 每个点是一个几何体，canvas 上直接画出来
-//  - 对比 MapLibre 的 circle 图层（CPU 逐个计算样式）
-// ============================================================
-function createDeckLayers(data: ReturnType<typeof generateMassiveData>) {
-  return [
-    new ScatterplotLayer<{
-      longitude: number;
-      latitude: number;
-      value: number;
-    }>({
-      id: 'big-data-scatter',
-      data,
-      // 半径映射：把随机值映射到 100~500 米范围
-      radiusScale: 50,
-      getPosition: (d: { longitude: number; latitude: number; value: number }) => [
-        d.longitude,
-        d.latitude,
-      ],
-      getRadius: (d: { longitude: number; latitude: number; value: number }) => 100 + d.value * 4,
-      getFillColor: (d: { longitude: number; latitude: number; value: number }) => {
-        // 绿色 → 黄色 → 红色  热力图颜色渐变
-        const v = d.value;
-        return [Math.floor(v * 255), Math.floor((1 - v) * 255), 60, 180];
-      },
-      // 开启圆圈抗锯齿，边缘平滑
-      stroked: true,
-      getLineColor: [0, 0, 0, 50],
-      getLineWidth: 1,
-      // ⚠️ 关键性能参数：把点合并到一个绘制调用
-      // 减少 GPU draw call，50,000 个点也能 60fps
-      // （`_instanced` 为 deck.gl 内部实验性参数，TS 类型未收录，故断言 any）
-      _instanced: true,
-    } as any),
-  ];
-}
+const MODES: { key: AggMode; label: string; desc: string }[] = [
+  { key: 'none', label: '不聚合', desc: '全部点位直接渲染（无聚合，GPU 60fps）' },
+  { key: 'hexagon', label: '六边形', desc: '蜂窝聚合，柱高+颜色=密度' },
+  { key: 'grid', label: '网格', desc: '网格聚合，颜色=密度' },
+  { key: 'cluster', label: '点聚类', desc: 'supercluster 按缩放合并成带数量点' },
+];
 
-// ============================================================
-// 初始视角 —— 定位到北京
-// ============================================================
-const INITIAL_VIEW_STATE: MapViewState = {
-  longitude: 116.4,
-  latitude: 40.0,
-  zoom: 9,
-  minZoom: 5,
-  maxZoom: 16,
-};
+const MapBigDataDemo: React.FC = () => {
+  const mapReady = useMapStore((s) => s.mapReady);
+  const [mode, setMode] = useState<AggMode>('cluster');
+  const [visible, setVisible] = useState(true);
+  const [clusterData, setClusterData] = useState<ClusterPoint[]>([]);
+  /** 聚合半径（像素）：越大聚类越少、越粗，越小聚类越细 */
+  const [clusterRadius, setClusterRadius] = useState(40);
+  /** 当前地图 zoom（驱动六边形/网格聚合尺寸联动） */
+  const [zoom, setZoom] = useState(11);
+  /** 聚合粒度：六边形/网格的格子大小倍率 */
+  const [aggScale, setAggScale] = useState(1);
+  /** 共享 overlay 的基准图层（进入时保存，离开时恢复） */
+  const baseRef = useRef<any[] | null>(null);
 
-// ============================================================
-// 方式一：纯 deck.gl 独立渲染（不需要 MapLibre）
-// 适合纯数据可视化，不关心底图
-// ============================================================
-const PureDeckGLView = () => {
-  const data = React.useMemo(() => generateMassiveData(50000), []);
-  const layers = React.useMemo(() => createDeckLayers(data), [data]);
+  // 模拟 5 万 POI（模块内自持一份，与 MapView 基准层互不影响）
+  const data = useMemo(() => generateMassiveData(50000), []);
 
-  return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <DeckGL initialViewState={INITIAL_VIEW_STATE} controller={true} layers={layers} />
-    </div>
-  );
-};
+  // supercluster 空间索引（radius 变化时重建）
+  const clusterIndex = useMemo(() => {
+    const idx = new Supercluster({ radius: clusterRadius, maxZoom: 16, minZoom: 3 });
+    idx.load(
+      data.map((d) => ({
+        type: 'Feature' as const,
+        properties: { value: d.value },
+        geometry: { type: 'Point' as const, coordinates: [d.longitude, d.latitude] },
+      })),
+    );
+    return idx;
+  }, [data, clusterRadius]);
 
-// ============================================================
-// 方式二：deck.gl 作为 MapLibre 的叠加层（推荐方式）
-//
-// 🔥 重点：这是项目中实际最常用的集成方式！
-//
-// 原理：
-//   1. MapLibre 负责底图（卫星图、路网、POI 标注等）
-//   2. deck.gl 作为透明叠加层覆盖在上面，专门渲染大数据
-//   3. 两者通过同步 viewState 来保持地图操作一致性
-//
-// 另一种集成方式：用 @deck.gl/mapbox 的 MapboxOverlay
-//   这是 deck.gl 官方推荐，把 deck.gl 作为 MapLibre 的一个
-//   custom layer 注入，相机完全同步，更优雅。
-//   需要安装 npm i @deck.gl/mapbox
-// ============================================================
-const MaplibreWithDeckGL = () => {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<Map | null>(null);
-
-  // deck.gl 的视角状态，由 MapLibre 驱动
-  const [viewState, setViewState] = useState<MapViewState>({
-    longitude: 116.4,
-    latitude: 40.0,
-    zoom: 9,
-  });
-
-  // 生成 50,000 个点
-  const data = React.useMemo(() => generateMassiveData(50000), []);
-  const layers = React.useMemo(() => createDeckLayers(data), [data]);
-
+  // 点聚类模式：监听地图 move，按当前视口+zoom 实时计算聚类
   useEffect(() => {
-    if (!mapContainer.current) return;
-
-    // 创建 MapLibre 实例
-    map.current = new maplibregl.Map({
-      container: mapContainer.current,
-      center: [116.4, 40.0],
-      zoom: 9,
-      style: {
-        version: 8,
-        sources: {
-          //   tianditu_vec: {
-          //     type: 'raster',
-          //     tiles: ['/bigmap0/bigmap/tile/gettile/GoogleChinaMap/{z}/{x}/{y}'],
-          //     tileSize: 256,
-          //   },
-          tianditu_vec: {
-            type: 'raster',
-            tiles: [
-              'https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=be4bbd91e911191d869cf79dbc96bcc1',
-            ],
-            tileSize: 256,
-          },
-          tianditu_cva: {
-            type: 'raster',
-            tiles: [
-              'https://t0.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=be4bbd91e911191d869cf79dbc96bcc1',
-            ],
-            tileSize: 256,
-          },
-        },
-        layers: [
-          { id: 'vec', type: 'raster', source: 'tianditu_vec' },
-          { id: 'cva', type: 'raster', source: 'tianditu_cva' },
-        ],
-      },
-    });
-
-    // 🔥 关键：当用户拖拽/缩放 MapLibre 时，同步更新 deck.gl 的视角
-    const onMove = () => {
-      if (!map.current) return;
-      const center = map.current.getCenter();
-      setViewState({
-        longitude: center.lng,
-        latitude: center.lat,
-        zoom: map.current.getZoom(),
-        pitch: map.current.getPitch(),
-        bearing: map.current.getBearing(),
-      });
+    if (mode !== 'cluster') return;
+    const map = useMapStore.getState().map;
+    if (!map) return;
+    const update = () => {
+      const b = map.getBounds();
+      const clusters = clusterIndex.getClusters(
+        [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+        Math.floor(map.getZoom()),
+      ) as any[];
+      setClusterData(
+        clusters.map((c) => ({
+          longitude: c.geometry.coordinates[0],
+          latitude: c.geometry.coordinates[1],
+          count: c.properties.cluster ? c.properties.point_count : 1,
+          isCluster: !!c.properties.cluster,
+        })),
+      );
     };
-
-    map.current.on('move', onMove);
-
+    update();
+    map.on('move', update);
     return () => {
-      map.current?.remove();
-      map.current = null;
+      map.off('move', update);
+    };
+  }, [mode, clusterIndex, mapReady]);
+
+  // 订阅地图 zoom，让六边形/网格聚合尺寸随缩放联动
+  useEffect(() => {
+    const map = useMapStore.getState().map;
+    if (!map) return;
+    const update = () => setZoom(map.getZoom());
+    update();
+    map.on('zoom', update);
+    return () => {
+      map.off('zoom', update);
+    };
+  }, [mapReady]);
+
+  // 构建当前模式的显示图层
+  const displayLayers = useMemo(() => {
+    // 格子尺寸随 zoom 联动：缩小（zoom 小）→ 格子大 → 聚合粗；放大 → 格子小 → 聚合细
+    const aggSize = 800 * aggScale * Math.pow(2, 11 - zoom);
+    switch (mode) {
+      case 'none':
+        return [createScatterDisplayLayer(data)];
+      case 'hexagon':
+        return [createHexagonLayer(data, aggSize * 0.6)];
+      case 'grid':
+        return [createGridLayer(data, aggSize)];
+      case 'cluster':
+        // 聚类数据未算出时回退散点，避免点位瞬间消失
+        return clusterData.length
+          ? createClusterLayers(clusterData)
+          : [createScatterDisplayLayer(data)];
+      default:
+        return [createScatterDisplayLayer(data)];
+    }
+  }, [mode, data, clusterData, zoom, aggScale]);
+
+  // 挂载保存基准图层 / 卸载恢复基准图层（只在卸载时恢复一次）
+  useEffect(() => {
+    baseRef.current = useMapStore.getState().deckLayers ?? null;
+    return () => {
+      const o = useMapStore.getState().deckOverlay;
+      if (o && baseRef.current) o.setProps({ layers: baseRef.current });
+      baseRef.current = null;
     };
   }, []);
 
-  return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {/* 底层：MapLibre 负责底图 */}
-      <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
-
-      {/*
-        上层：deck.gl 透明覆盖，渲染大数据点
-        deck.gl 设置了 transparent 背景，所以底图能透出来
-      */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none', // ⚠️ 让鼠标事件穿透到底层 MapLibre
-        }}
-      >
-        <DeckGL
-          viewState={viewState}
-          layers={layers}
-          // 不设 controller，由底图 MapLibre 处理交互
-          controller={false}
-        />
-      </div>
-    </div>
-  );
-};
-
-// ============================================================
-// 主组件：两种模式切换对比
-// ============================================================
-const MapBigDataDemo = () => {
-  const [mode, setMode] = useState<'pure-deck' | 'maplibre-deck'>('pure-deck');
+  // 图层随模式/可见性变化应用
+  useEffect(() => {
+    const s = useMapStore.getState();
+    const overlay = s.deckOverlay;
+    if (!overlay) return;
+    const line = baseRef.current?.find((l: any) => l.id === 'line-layer');
+    const layers = visible ? [...(line ? [line] : []), ...displayLayers] : line ? [line] : [];
+    overlay.setProps({ layers });
+  }, [displayLayers, visible]);
 
   return (
-    <div style={{ width: '100%', height: '85vh', position: 'relative' }}>
-      {/* ===== 顶部控制面板 ===== */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 12,
-          left: 12,
-          zIndex: 10,
-          background: 'rgba(0,0,0,0.75)',
-          color: '#fff',
-          padding: '14px 20px',
-          borderRadius: 8,
-          fontSize: 14,
-          maxWidth: 420,
-          fontFamily: 'monospace',
-        }}
-      >
-        <div style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
-          🚀 deck.gl 大数据渲染演示
-        </div>
-        <div style={{ marginBottom: 8, opacity: 0.85 }}>
-          当前渲染：<strong>50,000</strong> 个散点
+    <div className="h-full relative pointer-events-none">
+      {/* 顶部控制面板 */}
+      <div className="absolute top-20 left-20 z-10 max-w-[420px] bg-black/75 text-white p-4 rounded-lg text-sm font-mono pointer-events-auto">
+        <div className="font-bold text-base mb-2">🚀 deck.gl 大数据渲染演示</div>
+        <div className="mb-2 opacity-85">
+          当前渲染：<strong>50,000</strong> 个点（模拟充电站 POI）
         </div>
 
-        {/* 模式切换按钮 */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <button
-            onClick={() => setMode('pure-deck')}
-            style={{
-              padding: '4px 12px',
-              borderRadius: 4,
-              border: 'none',
-              cursor: 'pointer',
-              background: mode === 'pure-deck' ? '#4fc3f7' : '#555',
-              color: '#fff',
-            }}
-          >
-            纯 deck.gl（无底图）
-          </button>
-          <button
-            onClick={() => setMode('maplibre-deck')}
-            style={{
-              padding: '4px 12px',
-              borderRadius: 4,
-              border: 'none',
-              cursor: 'pointer',
-              background: mode === 'maplibre-deck' ? '#4fc3f7' : '#555',
-              color: '#fff',
-            }}
-          >
-            MapLibre + deck.gl
-          </button>
+        {/* 聚合方式切换 */}
+        <div className="flex gap-2 mb-3 flex-wrap">
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setMode(m.key)}
+              className={`px-3 py-1.5 rounded cursor-pointer text-xs transition-colors ${
+                mode === m.key ? 'bg-sky-500 text-white' : 'bg-white/15 hover:bg-white/25'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
 
-        {/* 知识点卡片 —— 学习重点 */}
-        <div
-          style={{
-            background: 'rgba(255,255,255,0.1)',
-            padding: '10px 12px',
-            borderRadius: 6,
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
+        {/* 聚合半径滑块（仅点聚类模式） */}
+        {mode === 'cluster' && (
+          <div className="mb-3">
+            <div className="flex justify-between text-xs mb-1">
+              <span>聚合半径（像素）</span>
+              <span>{clusterRadius}px</span>
+            </div>
+            <input
+              type="range"
+              min={10}
+              max={120}
+              step={5}
+              value={clusterRadius}
+              onChange={(e) => setClusterRadius(Number(e.target.value))}
+              className="w-full accent-sky-500 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] opacity-60">
+              <span>细（聚类多）</span>
+              <span>粗（聚类少）</span>
+            </div>
+          </div>
+        )}
+
+        {/* 聚合粒度滑块（六边形/网格模式，格子大小倍率） */}
+        {(mode === 'hexagon' || mode === 'grid') && (
+          <div className="mb-3">
+            <div className="flex justify-between text-xs mb-1">
+              <span>聚合粒度</span>
+              <span>{aggScale.toFixed(1)}x</span>
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={3}
+              step={0.5}
+              value={aggScale}
+              onChange={(e) => setAggScale(Number(e.target.value))}
+              className="w-full accent-sky-500 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] opacity-60">
+              <span>细（格子小）</span>
+              <span>粗（格子大）</span>
+            </div>
+          </div>
+        )}
+
+        {/* 总开关 */}
+        <button
+          onClick={() => setVisible(!visible)}
+          className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer mb-3"
         >
-          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>💡 为什么 deck.gl 不卡？</div>
-          <div>
-            MapLibre circle 图层 → <strong>CPU</strong> 逐个计算样式，1 万个点就开始掉帧
-            <br />
-            deck.gl ScatterplotLayer → <strong>GPU</strong> 批量绘制，5 万个点依然 60fps
-            <br />
-            <span style={{ opacity: 0.7 }}>试试用鼠标拖拽缩放，感受流畅度</span>
+          {visible ? '🙈 隐藏 POI' : '👁️ 显示 POI'}
+        </button>
+
+        {/* 当前模式说明 */}
+        <div className="bg-white/10 p-3 rounded text-xs leading-relaxed">
+          <div className="font-bold mb-1">
+            💡 当前模式：{MODES.find((m) => m.key === mode)?.label}
+          </div>
+          {MODES.find((m) => m.key === mode)?.desc}
+          <div className="mt-2 opacity-75">
+            {mode === 'cluster'
+              ? '缩放地图 → 聚类点自动合并/分裂'
+              : '试试用鼠标拖拽缩放，感受流畅度'}
           </div>
         </div>
       </div>
-
-      {/* ===== 地图区域 ===== */}
-      {mode === 'pure-deck' ? <PureDeckGLView /> : <MaplibreWithDeckGL />}
     </div>
   );
 };
 
 export default MapBigDataDemo;
-
-/*
- * ============================================================
- * 📚 延伸学习
- * ============================================================
- *
- * 1️⃣ 更多 deck.gl 大数据图层：
- *    - ArcLayer        → 弧形连线（适合航班、轨迹）
- *    - HexagonLayer    → 蜂窝聚合热力图
- *    - ScreenGridLayer → 屏幕网格热力图（50万+ 点）
- *    - GeoJsonLayer    → 标准的 GeoJSON 图层（大数据版）
- *    - TextLayer       → 文字标注层（大量标签不卡）
- *
- * 2️⃣ 官方推荐的 MapLibre 集成方式（@deck.gl/mapbox）：
- *    npm i @deck.gl/mapbox
- *    import { MapboxOverlay } from '@deck.gl/mapbox';
- *    // 然后作为 map.addLayer(new MapboxOverlay({...})) 注入
- *    // 优点是相机完全同步，不需要手动 setViewState
- *
- * 3️⃣ 什么时候用 MapLibre 原生 vs deck.gl？
- *    MapLibre 原生:  < 5000 个要素，简单标注
- *    deck.gl:       > 10000 个要素，复杂 3D 可视化，动画
- * ============================================================
- */

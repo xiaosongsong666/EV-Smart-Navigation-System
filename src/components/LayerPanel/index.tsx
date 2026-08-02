@@ -26,10 +26,10 @@ interface LayerPanelProps {
 
 /** 分组名 → 中文标签 */
 const GROUP_LABELS: Record<string, string> = {
-  '底图': '底图',
-  '路网': '路网',
-  '标注': '标注',
-  '区域': '区域',
+  底图: '底图',
+  路网: '路网',
+  标注: '标注',
+  区域: '区域',
   '3D': '3D',
   'Deck.gl': 'Deck.gl',
 };

@@ -1,24 +1,22 @@
 /**
- * 🚗 EV 路径规划页面
+ * 🚗 EV 路径规划页面（路由 /ev-route）
  *
- * 所有子模块集中在 features/ev-route/ 下
+ * 公用地图由 Layout 常驻渲染（MapLibre + 底图/路网/3D + Deck.gl 层）。
+ * 本模块不再自建地图，而是通过 useMapStore 拿到共享地图实例，
+ * 只负责本模块的业务：选点、规划路线、画路线、导航模拟、转向指令。
+ *
+ * 卸载时清理本模块加的 Marker / 图层 / 事件，避免跨路由残留。
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import maplibregl, { Map, Marker, NavigationControl } from 'maplibre-gl';
+import maplibregl, { Map, Marker, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { RoutePoint, RouteResult } from './types';
 import { decodePolyline, fmtDist } from './utils';
 import { useSimulation } from './hooks/useSimulation';
 import { RoutePanel } from './components/RoutePanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import MapLibreDraw from 'maplibre-gl-draw';
-// ⬇️ DeckGL 通过 MapboxOverlay 集成到 MapLibre 中，实现相机联动
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import { LineLayer } from '@deck.gl/layers';
-const TD_VEC =
-  'https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=be4bbd91e911191d869cf79dbc96bcc1';
-const TD_CVA =
-  'https://t0.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=be4bbd91e911191d869cf79dbc96bcc1';
+import { useMapStore } from '../../store';
+
 const API_BASE = 'http://localhost:4000';
 const EXAMPLES: Record<string, { s: RoutePoint; e: RoutePoint }> = {
   a: {
@@ -36,8 +34,9 @@ const EXAMPLES: Record<string, { s: RoutePoint; e: RoutePoint }> = {
 };
 
 export default function EVRoutePlanner() {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<Map | null>(null);
+  // 共享地图（由 mapStore 提供，Layout 的公用地图常驻）
+  const mapReady = useMapStore((s) => s.mapReady);
+  const mapRef = useRef<Map | null>(null);
   const startMarker = useRef<Marker | null>(null);
   const endMarker = useRef<Marker | null>(null);
   const pickingModeRef = useRef<'start' | 'end' | null>(null);
@@ -52,33 +51,17 @@ export default function EVRoutePlanner() {
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [mapReady, setMapReady] = useState(false);
 
   pickingModeRef.current = pickingMode;
-  const draw = useRef<MapLibreDraw | null>(null);
-  // 初始化地图
+
+  // 共享地图就绪后：同步 mapRef + 挂起「点击地图选点」handler
   useEffect(() => {
-    if (!mapContainer.current || map.current) return;
-    const m = new maplibregl.Map({
-      container: mapContainer.current,
-      center: [116.403874, 39.914885],
-      zoom: 11,
-      minZoom: 3,
-      maxZoom: 18,
-      style: {
-        version: 8,
-        sources: {
-          tianditu_vec: { type: 'raster', tiles: [TD_VEC], tileSize: 256 },
-          tianditu_cva: { type: 'raster', tiles: [TD_CVA], tileSize: 256 },
-        },
-        layers: [
-          { id: 'vec', type: 'raster', source: 'tianditu_vec' },
-          { id: 'cva', type: 'raster', source: 'tianditu_cva' },
-        ],
-      },
-    });
-    m.addControl(new NavigationControl(), 'top-right');
-    m.on('click', (e) => {
+    if (!mapReady) return;
+    const m = useMapStore.getState().map;
+    if (!m) return;
+    mapRef.current = m;
+
+    const onClick = (e: MapMouseEvent) => {
       const mode = pickingModeRef.current;
       if (!mode) return;
       const pt: RoutePoint = {
@@ -95,329 +78,25 @@ export default function EVRoutePlanner() {
         setEndInput(pt.name);
         setPickingMode(null);
       }
-    });
-    map.current = m;
-    m.on('load', () => setMapReady(true));
-    map.current.on('load', () => {
-      // ----- 绘制工具（方便交互画图） -----
-      draw.current = new MapLibreDraw({
-        displayControlsDefault: true, //绘制图形的菜单按钮设置显示与隐藏
-        controls: {
-          point: true,
-          line_string: true,
-          polygon: true,
-          trash: true,
-        },
-      });
-      map.current!.addControl(draw.current! as any, 'top-left');
-      map.current!.on('draw.create', (e) => {
-        debugger;
-        console.log('绘制完成，图形数据：', e.features);
-      });
-
-      // 2. 添加数据源  北京路网
-      map.current!.addSource('my-local-tiles', {
-        type: 'vector',
-        url: 'http://localhost:8080/data/output.json',
-      });
-
-      // 3. 添加图层
-      // --- 样式 A: 主干道 ---
-      map.current!.addLayer({
-        id: 'road-major',
-        type: 'line',
-        source: 'my-local-tiles',
-        'source-layer': 'beijing',
-        filter: ['in', 'fclass', 'motorway', 'trunk', 'primary'],
-        paint: {
-          'line-color': '#ff4d4f',
-          'line-width': 2,
-        },
-      });
-
-      // --- 样式 B: 普通街道 ---
-      map.current!.addLayer({
-        id: 'road-minor',
-        type: 'line',
-        source: 'my-local-tiles',
-        'source-layer': 'beijing',
-        filter: ['!in', 'fclass', 'motorway', 'trunk', 'primary'],
-        paint: {
-          'line-color': '#8c8c8c',
-          'line-width': 1,
-        },
-      });
-
-      // =============================================
-      // 1️⃣ 点 (Point)
-      // =============================================
-      map.current!.addSource('source-point', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: { name: '北京中心点' },
-          geometry: {
-            type: 'Point',
-            coordinates: [116.403874, 39.914885],
-          },
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-point',
-        type: 'circle',
-        source: 'source-point',
-        paint: {
-          'circle-radius': 10,
-          'circle-color': '#ff4444',
-          'circle-stroke-width': 3,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-point-label',
-        type: 'symbol',
-        source: 'source-point',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-offset': [0, -2],
-          'text-anchor': 'bottom',
-          'text-size': 14,
-        },
-        paint: {
-          'text-color': '#ff4444',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
-        },
-      });
-
-      // =============================================
-      // 2️⃣ 天线 (LineString)  数据层
-      // =============================================
-      map.current!.addSource('source-line', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: { name: '天线' },
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              [116.428, 39.908],
-              [116.428, 39.925],
-              [116.433, 39.93],
-            ],
-          },
-        },
-      });
-      map.current!.addLayer({
-        id: 'layer-line',
-        type: 'line',
-        source: 'source-line',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round',
-        },
-        paint: {
-          'line-color': '#ffaa00',
-          'line-width': 4,
-          'line-dasharray': [0.5, 0.3],
-        },
-      });
-      // 显示图标或者文字
-      map.current!.addLayer({
-        id: 'layer-line-label',
-        type: 'symbol',
-        source: 'source-line',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-offset': [0, -1.5],
-          'text-anchor': 'bottom',
-          'text-size': 14,
-        },
-        paint: {
-          'text-color': '#ffaa00',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
-        },
-      });
-
-      // =============================================
-      // 3️⃣ 矩形 (Polygon)
-      // =============================================
-      map.current!.addSource('source-polygon', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: { name: '矩形区域' },
-          geometry: {
-            type: 'Polygon',
-            coordinates: [
-              [
-                [116.355, 39.895],
-                [116.385, 39.895],
-                [116.385, 39.92],
-                [116.355, 39.92],
-                [116.355, 39.895],
-              ],
-            ],
-          },
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-polygon-fill',
-        type: 'fill',
-        source: 'source-polygon',
-        paint: {
-          'fill-color': '#3388ff',
-          'fill-opacity': 0.35,
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-polygon-outline',
-        type: 'line',
-        source: 'source-polygon',
-        paint: {
-          'line-color': '#3388ff',
-          'line-width': 3,
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-polygon-label',
-        type: 'symbol',
-        source: 'source-polygon',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-offset': [0, -1.5],
-          'text-anchor': 'bottom',
-          'text-size': 14,
-        },
-        paint: {
-          'text-color': '#3388ff',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
-        },
-      });
-
-      // =============================================
-      // 4️⃣ 三维图形 (fill-extrusion)
-      // =============================================
-      map.current!.addSource('source-3d', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: { name: '三维大楼', height: 300 },
-          geometry: {
-            type: 'Polygon',
-            coordinates: [
-              [
-                [116.448, 39.898],
-                [116.462, 39.898],
-                [116.462, 39.91],
-                [116.448, 39.91],
-                [116.448, 39.898],
-              ],
-            ],
-          },
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-3d',
-        type: 'fill-extrusion',
-        source: 'source-3d',
-        paint: {
-          'fill-extrusion-color': '#ff66cc',
-          'fill-extrusion-height': ['get', 'height'],
-          'fill-extrusion-base': 0,
-          'fill-extrusion-opacity': 0.8,
-        },
-      });
-
-      map.current!.addLayer({
-        id: 'layer-3d-label',
-        type: 'symbol',
-        source: 'source-3d',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-offset': [0, -2.5],
-          'text-anchor': 'bottom',
-          'text-size': 14,
-        },
-        paint: {
-          'text-color': '#ff66cc',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
-        },
-      });
-
-      // 调整图层顺序
-      map.current!.moveLayer('layer-3d');
-      map.current!.moveLayer('layer-3d-label');
-      map.current!.moveLayer('layer-polygon-fill');
-      map.current!.moveLayer('layer-polygon-outline');
-      map.current!.moveLayer('layer-polygon-label');
-
-      // 加载 3D Tiles（必须在 style load 之后才能 addLayer）
-      //   load3dtiles('https://pelican-public.s3.amazonaws.com/3dtiles/agi-hq/tileset.json', -300, map);
-
-      // =============================================
-      // ⬇️ Step 1: 定义数据（Feature）
-      // =============================================
-      const lineData = [
-        { from: [116.397, 39.908] as [number, number], to: [116.407, 39.908] as [number, number] },
-        { from: [116.397, 39.915] as [number, number], to: [116.407, 39.915] as [number, number] },
-        { from: [116.397, 39.908] as [number, number], to: [116.397, 39.915] as [number, number] },
-      ];
-
-      // =============================================
-      // ⬇️ Step 2: 基于数据创建图层（Layer）
-      // =============================================
-      const lineLayer = new LineLayer<{ from: [number, number]; to: [number, number] }>({
-        id: 'line-layer',
-        data: lineData,
-        getSourcePosition: (d) => d.from,
-        getTargetPosition: (d) => d.to,
-        getColor: [255, 80, 80],
-        getWidth: 5,
-      });
-
-      // =============================================
-      // ⬇️ Step 3: 用图层构建 Overlay
-      // =============================================
-      const deckOverlay = new MapboxOverlay({
-        layers: [lineLayer],
-      });
-
-      // =============================================
-      // ⬇️ Step 4: Overlay 作为控件添加到地图
-      //            MapLibre 自动调用 onAdd() 初始化，
-      //            地图平移/缩放时 DeckGL 自动同步
-      // =============================================
-      map.current!.addControl(deckOverlay);
-    });
-
-    // 页面销毁时触发
-    return () => {
-      map.current?.remove();
-      map.current = null;
     };
-  }, []);
+    m.on('click', onClick);
+
+    return () => {
+      m.off('click', onClick);
+    };
+  }, [mapReady]);
 
   // 起点/终点 Marker
   const mkMarker = (color: string, label: string, pt: RoutePoint | null) => {
-    if (!map.current) return null;
-    if (pt === null) return null;
+    const m = mapRef.current;
+    if (!m || pt === null) return null;
     return new Marker({
       element: Object.assign(document.createElement('div'), {
         innerHTML: `<div class="${color} text-white px-2.5 py-1 rounded-full text-xs font-bold shadow-md border-2 border-white">${label}</div>`,
       }),
     })
       .setLngLat([pt.lng, pt.lat])
-      .addTo(map.current);
+      .addTo(m);
   };
   useEffect(() => {
     startMarker.current?.remove();
@@ -428,9 +107,9 @@ export default function EVRoutePlanner() {
     endMarker.current = mkMarker('bg-red-500', '终点', endPoint) ?? null;
   }, [endPoint]);
 
-  // 画路线
+  // 画路线（route-source / route-glow / route-line，id 与共享地图不冲突）
   const drawRoute = useCallback((coords: [number, number][]) => {
-    const m = map.current;
+    const m = mapRef.current;
     if (!m || coords.length < 2) return;
     const doit = () => {
       ['route-line', 'route-glow'].forEach((id) => {
@@ -468,7 +147,7 @@ export default function EVRoutePlanner() {
     drawRoute(routeCoords);
   }, [routeCoords, drawRoute]);
 
-  // API
+  // 调用后端 Valhalla 路径规划
   const planRoute = useCallback(async () => {
     if (!startPoint || !endPoint) {
       setError('请设置起点终点');
@@ -503,65 +182,74 @@ export default function EVRoutePlanner() {
     }
   }, [startPoint, endPoint, costing]);
 
-  const sim = useSimulation({ mapRef: map, routeCoords, routeResult, drawRoute });
+  const sim = useSimulation({ mapRef, routeCoords, routeResult, drawRoute });
+
+  // 卸载清理：移除 Marker / 路线图层 / 已行驶图层
+  useEffect(() => {
+    return () => {
+      startMarker.current?.remove();
+      endMarker.current?.remove();
+      const m = mapRef.current;
+      if (m) {
+        ['route-line', 'route-glow', 'traveled-line'].forEach((id) => {
+          if (m.getLayer(id)) m.removeLayer(id);
+        });
+        ['route-source', 'traveled-source'].forEach((id) => {
+          if (m.getSource(id)) m.removeSource(id);
+        });
+      }
+    };
+  }, []);
 
   return (
     <ErrorBoundary>
-      <div className="h-[calc(100vh-200px)] flex flex-col font-sans">
-        <RoutePanel
-          startPoint={startPoint}
-          endPoint={endPoint}
-          startInput={startInput}
-          endInput={endInput}
-          costing={costing}
-          pickingMode={pickingMode}
-          isLoading={isLoading}
-          routeResult={routeResult}
-          error={error}
-          isSimulating={sim.isSimulating}
-          isPaused={sim.isPaused}
-          simSpeed={sim.simSpeed}
-          simProgress={sim.simProgress}
-          simInfo={sim.simInfo}
-          onStartInputChange={setStartInput}
-          onEndInputChange={setEndInput}
-          onCostingChange={setCosting}
-          onPickMode={setPickingMode}
-          onPlanRoute={planRoute}
-          onStartSim={sim.startSimulation}
-          onStopSim={sim.stopSimulation}
-          onTogglePause={sim.togglePause}
-          onCycleSpeed={sim.cycleSpeed}
-          onDismissResult={() => {
-            sim.stopSimulation();
-            setRouteResult(null);
-            setRouteCoords([]);
-          }}
-          onDismissError={() => setError(null)}
-          onSetExample={(ex) => {
-            const d = EXAMPLES[ex];
-            if (d) {
-              setStartPoint(d.s);
-              setStartInput(d.s.name);
-              setEndPoint(d.e);
-              setEndInput(d.e.name);
-            }
-          }}
-        />
-        <div className="flex-1 flex gap-2 min-h-0">
-          <div className="flex-1 rounded-xl overflow-hidden relative bg-gray-100">
-            <div ref={mapContainer} className="w-full h-full" />
-            {!mapReady && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-100 animate-pulse">
-                <div className="text-center">
-                  <div className="w-12 h-12 border-4 border-purple-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                  <p className="text-gray-500 text-sm">地图加载中...</p>
-                </div>
-              </div>
-            )}
-          </div>
+      {/* 模块内容局限在地图区域（顶部导航之下、底部导航之上），不遮挡地图操作 */}
+      <div className="absolute inset-x-0 top-16 bottom-16 flex flex-col font-sans pointer-events-none">
+        <div className="pointer-events-auto px-4">
+          <RoutePanel
+            startPoint={startPoint}
+            endPoint={endPoint}
+            startInput={startInput}
+            endInput={endInput}
+            costing={costing}
+            pickingMode={pickingMode}
+            isLoading={isLoading}
+            routeResult={routeResult}
+            error={error}
+            isSimulating={sim.isSimulating}
+            isPaused={sim.isPaused}
+            simSpeed={sim.simSpeed}
+            simProgress={sim.simProgress}
+            simInfo={sim.simInfo}
+            onStartInputChange={setStartInput}
+            onEndInputChange={setEndInput}
+            onCostingChange={setCosting}
+            onPickMode={setPickingMode}
+            onPlanRoute={planRoute}
+            onStartSim={sim.startSimulation}
+            onStopSim={sim.stopSimulation}
+            onTogglePause={sim.togglePause}
+            onCycleSpeed={sim.cycleSpeed}
+            onDismissResult={() => {
+              sim.stopSimulation();
+              setRouteResult(null);
+              setRouteCoords([]);
+            }}
+            onDismissError={() => setError(null)}
+            onSetExample={(ex) => {
+              const d = EXAMPLES[ex];
+              if (d) {
+                setStartPoint(d.s);
+                setStartInput(d.s.name);
+                setEndPoint(d.e);
+                setEndInput(d.e.name);
+              }
+            }}
+          />
+        </div>
+        <div className="flex-1 relative">
           {routeResult && routeResult.maneuvers.length > 0 && (
-            <div className="w-[280px] bg-white/95 rounded-xl shadow-md p-3 overflow-y-auto text-sm">
+            <div className="absolute right-3 top-3 w-[280px] max-h-full overflow-y-auto bg-white/95 rounded-xl shadow-md p-3 text-sm pointer-events-auto">
               <h3 className="m-0 mb-2.5 text-[15px] font-bold">📋 导航指令</h3>
               {routeResult.maneuvers.map((m, i) => (
                 <div
@@ -577,7 +265,7 @@ export default function EVRoutePlanner() {
             </div>
           )}
         </div>
-        <p className="mt-1 text-xs text-gray-400 text-center py-1">
+        <p className="text-xs text-gray-400 text-center py-1">
           💡 规划路线后点「开始导航」→ 地图跟随小车行驶
         </p>
       </div>

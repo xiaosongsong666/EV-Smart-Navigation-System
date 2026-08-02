@@ -6,15 +6,7 @@
  */
 import React from 'react';
 import { motion } from 'framer-motion';
-import {
-  Palette,
-  Ruler,
-  Globe,
-  BatteryWarning,
-  Gauge,
-  Volume2,
-  RotateCcw,
-} from 'lucide-react';
+import { Palette, Ruler, Globe, BatteryWarning, Gauge, Volume2, RotateCcw } from 'lucide-react';
 import { useSettingsStore } from '../store';
 import type { DrivingMode, Language, ThemeMode, Units } from '../types';
 
@@ -50,9 +42,7 @@ const Settings: React.FC = () => {
             />
           ))}
         </div>
-        <p className="mt-3 text-xs text-gray-400">
-          💡 主题切换会实时同步地图底图样式（白天/夜间）
-        </p>
+        <p className="mt-3 text-xs text-gray-400">💡 主题切换会实时同步地图底图样式（白天/夜间）</p>
       </Card>
 
       {/* 距离单位 */}
@@ -179,7 +169,15 @@ const Settings: React.FC = () => {
 /* ---------- 小组件 ---------- */
 
 /** 毛玻璃卡片容器 */
-function Card({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function Card({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}

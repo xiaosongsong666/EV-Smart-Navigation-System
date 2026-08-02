@@ -19,21 +19,27 @@ export function useViewport(): Viewport | null {
  * 从 MapLibre 实例提取视口信息
  * 在 map 'move' 事件回调中调用
  */
-export function extractViewport(map: { getCenter: () => { lng: number; lat: number }; getZoom: () => number; getPitch: () => number; getBearing: () => number; getBounds: () => { getWest: () => number; getSouth: () => number; getEast: () => number; getNorth: () => number } }): Viewport {
+export function extractViewport(map: {
+  getCenter: () => { lng: number; lat: number };
+  getZoom: () => number;
+  getPitch: () => number;
+  getBearing: () => number;
+  getBounds: () => {
+    getWest: () => number;
+    getSouth: () => number;
+    getEast: () => number;
+    getNorth: () => number;
+  };
+}): Viewport {
   const center = map.getCenter();
   const bounds = map.getBounds();
   console.log('中间点' + center);
-  console.log('视口' +  bounds)
+  console.log('视口' + bounds);
   return {
     center: [center.lng, center.lat],
     zoom: map.getZoom(),
     pitch: map.getPitch(),
     bearing: map.getBearing(),
-    bounds: [
-      bounds.getWest(),
-      bounds.getSouth(),
-      bounds.getEast(),
-      bounds.getNorth(),
-    ],
+    bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
   };
 }

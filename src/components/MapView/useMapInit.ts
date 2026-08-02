@@ -142,21 +142,25 @@ export function useMapInit({
 
       // Deck.gl 集成
       const lineLayer = createLineLayer();
-      const scatterLayer = createScatterLayers(scatterData);
+      // 海量散点默认隐藏：只归 /bigdata 模块打开，其它路由经 LayerPanel 手动开启
+      // （直接传 visible:false，避免对未初始化图层调用 clone 触发断言）
+      const scatterLayer = createScatterLayers(scatterData, false);
       const deckLayers = [lineLayer, scatterLayer];
 
       const overlay = new MapboxOverlay({ layers: deckLayers });
       map.addControl(overlay);
       overlayRef.current = overlay;
       deckLayersRef.current = deckLayers;
-      // 全局注册 Deck.gl Overlay (供所有模块通过 useMapStore 操作图层)
+      // 全局注册 Deck.gl Overlay + 图层数组 (供所有模块通过 useMapStore 操作图层)
       useMapStore.getState().setDeckOverlay(overlay);
+      useMapStore.getState().setDeckLayers(deckLayers);
 
       // 初始化面板状态
       const initialStates: LayerStateMap = {};
       LAYER_CONFIG.forEach((cfg) => {
         if (cfg.group === 'Deck.gl') {
-          initialStates[cfg.id] = { visible: true, opacity: 1 };
+          const dl = deckLayers.find((l: any) => l.id === cfg.id);
+          initialStates[cfg.id] = { visible: dl?.props.visible !== false, opacity: 1 };
         } else {
           const layer = map.getLayer(cfg.id);
           if (layer) {
@@ -185,6 +189,7 @@ export function useMapInit({
       useMapStore.getState().setMapReady(false);
       useMapStore.getState().setMap(null);
       useMapStore.getState().setDeckOverlay(null);
+      useMapStore.getState().setDeckLayers(null);
       map.remove();
       mapRef.current = null;
     };

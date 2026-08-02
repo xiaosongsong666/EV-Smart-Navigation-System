@@ -10,11 +10,13 @@ interface LineDataItem {
 /**
  * 构建 Deck.gl ScatterplotLayer (GPU 实例化渲染)
  * @param data 散点数据
+ * @param visible 初始是否可见（海量 POI 散点默认隐藏，仅 /bigdata 模块打开）
  */
-export function createScatterLayers(data: ScatterDataItem[]) {
+export function createScatterLayers(data: ScatterDataItem[], visible = true) {
   return new ScatterplotLayer({
     id: 'big-data-scatter',
     data,
+    visible,
     radiusScale: 50,
     getPosition: (d: ScatterDataItem) => [d.longitude, d.latitude],
     getRadius: (d: ScatterDataItem) => 100 + d.value * 4,

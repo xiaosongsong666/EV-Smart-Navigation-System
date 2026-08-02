@@ -9,24 +9,25 @@ import {
   Settings,
   Sun,
   Moon,
+  BatteryCharging,
 } from 'lucide-react';
 import { useSettingsStore } from '../../store';
 import Mapliber, { type MapliberHandle } from '../../pages/mapliberModel';
 
-/**
- * 说明：页面（如 MapView / 路径规划）以「全屏覆盖层」的形式渲染，
- * 因此 Layout 不直接渲染 children，这里不再接收该 prop。
- */
-interface LayoutProps {}
+interface LayoutProps {
+  /** 当前路由对应的模块内容，叠加在公用地图之上渲染 */
+  children: React.ReactNode;
+}
 
 const NAV_ITEMS = [
   { path: '/', icon: Map, label: '地图引擎' },
   { path: '/ev-route', icon: ArrowRightLeft, label: '路径规划' },
+  { path: '/ev-charging', icon: BatteryCharging, label: '续航充电' },
   { path: '/bigdata', icon: Database, label: '海量POI' },
   { path: '/settings', icon: Settings, label: '设置' },
 ];
 
-const Layout: React.FC<LayoutProps> = () => {
+const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
   const theme = useSettingsStore((s) => s.settings.theme);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
@@ -47,14 +48,18 @@ const Layout: React.FC<LayoutProps> = () => {
 
   return (
     <div className="app-container">
-      {/* ===== 全屏地图背景 ===== */}
+      {/* ===== 公用地图背景（常驻，切换路由不重载） ===== */}
       <div className="fixed inset-0 z-0">
         <Mapliber
           ref={mapRef}
           style={{ width: '100%', height: 'calc(100vh - 8rem)', marginTop: '4rem' }}
           theme={theme}
+          showLayerPanel={location.pathname === '/'}
         />
       </div>
+
+      {/* ===== 模块内容叠加层（pointer-events-none 保证地图可交互） ===== */}
+      <main className="absolute inset-0 z-10 pointer-events-none">{children}</main>
 
       {/* ===== 顶部导航栏 ===== */}
       <header className="relative z-10 glass-effect sticky top-0 border-b border-white/20 backdrop-blur-md">
@@ -68,9 +73,7 @@ const Layout: React.FC<LayoutProps> = () => {
               >
                 <Car className="w-5 h-5 text-white" />
               </motion.div>
-              <span className="text-xl font-bold text-gradient">
-                下一代车载 EV 智能导航系统
-              </span>
+              <span className="text-xl font-bold text-gradient">下一代车载 EV 智能导航系统</span>
             </Link>
 
             {/* 主题切换 */}

@@ -8,6 +8,8 @@ interface MapStore {
   map: MapLibreMap | null;
   /** Deck.gl MapboxOverlay 实例 (全局注册, 供任意组件操作 Deck.gl 图层) */
   deckOverlay: MapboxOverlay | null;
+  /** Deck.gl 图层数组 (供模块 clone + setProps 切换显隐, 如 /bigdata 的散点层) */
+  deckLayers: any[] | null;
   /** 当前视口信息 (由地图 move 事件驱动) */
   viewport: Viewport | null;
   /** 地图是否已加载完成 */
@@ -16,6 +18,8 @@ interface MapStore {
   setMap: (map: MapLibreMap | null) => void;
   /** 注册/销毁 Deck.gl Overlay */
   setDeckOverlay: (overlay: MapboxOverlay | null) => void;
+  /** 注册/更新 Deck.gl 图层数组 */
+  setDeckLayers: (layers: any[] | null) => void;
   /** 更新视口 */
   updateViewport: (viewport: Viewport) => void;
   /** 标记地图加载完成 */
@@ -32,10 +36,12 @@ interface MapStore {
 export const useMapStore = create<MapStore>()((set) => ({
   map: null,
   deckOverlay: null,
+  deckLayers: null,
   viewport: null,
   mapReady: false,
   setMap: (map) => set({ map }),
   setDeckOverlay: (deckOverlay) => set({ deckOverlay }),
+  setDeckLayers: (deckLayers) => set({ deckLayers }),
   updateViewport: (viewport) => set({ viewport }),
   setMapReady: (ready) => set({ mapReady: ready }),
 }));
