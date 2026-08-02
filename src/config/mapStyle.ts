@@ -1,5 +1,13 @@
 import maplibregl from 'maplibre-gl';
 
+/**
+ * 后端瓦片代理地址。
+ * 瓦片统一走后端 /api/tiles/*，好处：
+ *   1. 前端 Service Worker 只缓存这一个源 → 离线可用（模块四）
+ *   2. 天地图密钥等藏在后端，不暴露给浏览器
+ */
+const API_BASE = 'http://localhost:4000';
+
 /** 图层配置项 */
 export interface LayerConfigItem {
   id: string;
@@ -28,9 +36,8 @@ export const LAYER_CONFIG: LayerConfigItem[] = [
  * @param isDarkMode true=夜间 false=白天
  */
 export function getMapStyle(isDarkMode: boolean): maplibregl.StyleSpecification {
-  const baseLayerUrl = isDarkMode
-    ? 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png'
-    : 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png';
+  // 瓦片走后端代理：前端只请求 /api/tiles/:provider/:z/:x/:y
+  const baseLayerUrl = `${API_BASE}/api/tiles/${isDarkMode ? 'carto_dark' : 'carto_light'}/{z}/{x}/{y}`;
 
   return {
     version: 8,
@@ -42,11 +49,10 @@ export function getMapStyle(isDarkMode: boolean): maplibregl.StyleSpecification 
         attribution:
           '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       },
+      // 天地图标注：密钥由后端代理添加（config/tiles.js），前端不暴露 tk
       tianditu_labels: {
         type: 'raster',
-        tiles: [
-          'https://t0.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=be4bbd91e911191d869cf79dbc96bcc1',
-        ],
+        tiles: [`${API_BASE}/api/tiles/tianditu_vec/{z}/{x}/{y}`],
         tileSize: 256,
       },
     },

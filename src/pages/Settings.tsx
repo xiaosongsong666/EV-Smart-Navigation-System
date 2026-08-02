@@ -4,16 +4,57 @@
  * 所有设置项写入 useSettingsStore（Zustand + persist，见 src/store/settingsStore.ts）。
  * 修改地图主题后，Layout 的 useEffect 会自动同步地图样式。
  */
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Palette, Ruler, Globe, BatteryWarning, Gauge, Volume2, RotateCcw } from 'lucide-react';
+import {
+  Palette,
+  Ruler,
+  Globe,
+  BatteryWarning,
+  Gauge,
+  Volume2,
+  RotateCcw,
+  HardDrive,
+  Trash2,
+} from 'lucide-react';
 import { useSettingsStore } from '../store';
+import { useOnline, getTileCacheStats, clearTileCache } from '../utils/offline';
 import type { DrivingMode, Language, ThemeMode, Units } from '../types';
+
+/** 字节数格式化成可读文本（B / KB / MB） */
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
 
 const Settings: React.FC = () => {
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const resetSettings = useSettingsStore((s) => s.resetSettings);
+
+  /* ---- 离线缓存（模块四）：在线状态 + 缓存统计 + 清理 ---- */
+  const online = useOnline();
+  const [cacheStats, setCacheStats] = useState({ count: 0, sizeBytes: 0 });
+  const [cleared, setCleared] = useState(false);
+
+  const refreshStats = useCallback(async () => {
+    setCacheStats(await getTileCacheStats());
+  }, []);
+
+  useEffect(() => {
+    refreshStats();
+    // 模拟行驶时瓦片持续入缓存，定时刷新统计
+    const id = setInterval(refreshStats, 3000);
+    return () => clearInterval(id);
+  }, [refreshStats]);
+
+  const handleClearCache = async () => {
+    await clearTileCache();
+    setCleared(true);
+    refreshStats();
+    setTimeout(() => setCleared(false), 2000);
+  };
 
   return (
     <div className="space-y-6 pointer-events-auto">
@@ -147,6 +188,49 @@ const Settings: React.FC = () => {
               }`}
             />
           </button>
+        </div>
+      </Card>
+
+      {/* 离线缓存（模块四） */}
+      <Card icon={<HardDrive className="w-6 h-6 text-slate-600" />} title="离线缓存">
+        <div className="space-y-3">
+          {/* 在线/离线状态 */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}
+            />
+            <span className={`text-sm ${online ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {online ? '在线 · 地图瓦片正常加载' : '离线 · 正在使用本地瓦片缓存'}
+            </span>
+          </div>
+
+          {/* 缓存统计 */}
+          <div className="grid grid-cols-2 gap-3 text-center">
+            <div className="p-3 bg-slate-50 rounded-lg">
+              <div className="text-xl font-bold">{cacheStats.count}</div>
+              <div className="text-xs text-gray-500">缓存瓦片数</div>
+            </div>
+            <div className="p-3 bg-slate-50 rounded-lg">
+              <div className="text-xl font-bold">{formatBytes(cacheStats.sizeBytes)}</div>
+              <div className="text-xs text-gray-500">占用空间</div>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-400">
+            瓦片由 Service Worker 按 Cache-First 策略缓存，断网时地图底图仍可显示。
+            缓存存于浏览器本地，与账号无关。
+          </p>
+
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleClearCache}
+            className="flex items-center gap-2 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            清除瓦片缓存
+            {cleared && <span className="text-xs opacity-90">（已清除）</span>}
+          </motion.button>
         </div>
       </Card>
 

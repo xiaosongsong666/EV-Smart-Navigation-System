@@ -12,6 +12,7 @@ import {
   BatteryCharging,
 } from 'lucide-react';
 import { useSettingsStore } from '../../store';
+import { useOnline } from '../../utils/offline';
 import Mapliber, { type MapliberHandle } from '../../pages/mapliberModel';
 
 interface LayoutProps {
@@ -32,6 +33,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const theme = useSettingsStore((s) => s.settings.theme);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const mapRef = useRef<MapliberHandle>(null);
+  // 在线/离线状态（模块四离线缓存的状态指示器）
+  const online = useOnline();
 
   /**
    * 地图主题跟随设置同步：
@@ -75,6 +78,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               </motion.div>
               <span className="text-xl font-bold text-gradient">下一代车载 EV 智能导航系统</span>
             </Link>
+
+            {/* 在线/离线状态指示器（模块四） */}
+            <span
+              className={`flex items-center gap-1 text-xs mr-3 ${
+                online ? 'text-emerald-600' : 'text-amber-600'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}
+              />
+              {online ? '在线' : '离线模式'}
+            </span>
 
             {/* 主题切换 */}
             <button
