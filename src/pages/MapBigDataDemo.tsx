@@ -12,7 +12,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Supercluster from 'supercluster';
 import { useMapStore } from '../store';
-import { generateMassiveData } from '../utils/dataGenerator';
+import { generateMassiveData, type ScatterDataItem } from '../utils/dataGenerator';
+import { RTree } from '../utils/spatial';
 import {
   createScatterDisplayLayer,
   createHexagonLayer,
@@ -41,11 +42,33 @@ const MapBigDataDemo: React.FC = () => {
   const [zoom, setZoom] = useState(11);
   /** 聚合粒度：六边形/网格的格子大小倍率 */
   const [aggScale, setAggScale] = useState(1);
+  /** R-Tree 视口过滤开关（仅不聚合模式） */
+  const [viewportFilter, setViewportFilter] = useState(false);
+  /** R-Tree 查询出的视口内点 */
+  const [filteredData, setFilteredData] = useState<ScatterDataItem[]>([]);
   /** 共享 overlay 的基准图层（进入时保存，离开时恢复） */
   const baseRef = useRef<any[] | null>(null);
 
   // 模拟 5 万 POI（模块内自持一份，与 MapView 基准层互不影响）
   const data = useMemo(() => generateMassiveData(50000), []);
+
+  // R-Tree 空间索引（模块五：海量POI 视口过滤）
+  // 用 bulkLoad 一次性建树（比逐个 insert 快），每个点退化为零面积 bbox
+  const rtree = useMemo(() => {
+    const tree = new RTree<ScatterDataItem>();
+    tree.bulkLoad(
+      data.map((p) => ({
+        item: p,
+        bbox: [p.longitude, p.latitude, p.longitude, p.latitude] as [
+          number,
+          number,
+          number,
+          number,
+        ],
+      })),
+    );
+    return tree;
+  }, [data]);
 
   // supercluster 空间索引（radius 变化时重建）
   const clusterIndex = useMemo(() => {
@@ -60,7 +83,10 @@ const MapBigDataDemo: React.FC = () => {
     return idx;
   }, [data, clusterRadius]);
 
-  // 点聚类模式：监听地图 move，按当前视口+zoom 实时计算聚类
+  // 点聚类模式：按当前视口+zoom 计算聚类
+  // ⚠️ 用 moveend 而不是 move：move 在拖拽/缩放时每帧触发，
+  //    每次都要重算 supercluster + setClusterData + 重建图层 → 卡死。
+  //    moveend 只在"停下后"触发一次，流畅。
   useEffect(() => {
     if (mode !== 'cluster') return;
     const map = useMapStore.getState().map;
@@ -81,23 +107,43 @@ const MapBigDataDemo: React.FC = () => {
       );
     };
     update();
-    map.on('move', update);
+    map.on('moveend', update);
     return () => {
-      map.off('move', update);
+      map.off('moveend', update);
     };
   }, [mode, clusterIndex, mapReady]);
 
   // 订阅地图 zoom，让六边形/网格聚合尺寸随缩放联动
+  // ⚠️ 用 zoomend 而不是 zoom：zoom 每帧触发会带动整个组件重渲染 → 卡顿。
   useEffect(() => {
     const map = useMapStore.getState().map;
     if (!map) return;
     const update = () => setZoom(map.getZoom());
     update();
-    map.on('zoom', update);
+    map.on('zoomend', update);
     return () => {
-      map.off('zoom', update);
+      map.off('zoomend', update);
     };
   }, [mapReady]);
+
+  // R-Tree 视口过滤：开启时按当前视口 BBox 查询只保留可见点
+  // ⚠️ 用 moveend 而不是 move：move 在拖拽/缩放时每帧触发，每次都要
+  //    重建图层 + React 重渲染 → 卡顿；moveend 只在"停下后"触发一次，流畅。
+  useEffect(() => {
+    if (!viewportFilter) return;
+    const map = useMapStore.getState().map;
+    if (!map) return;
+    const update = () => {
+      const b = map.getBounds();
+      const found = rtree.search([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+      setFilteredData(found);
+    };
+    update();
+    map.on('moveend', update);
+    return () => {
+      map.off('moveend', update);
+    };
+  }, [viewportFilter, rtree, mapReady]);
 
   // 构建当前模式的显示图层
   const displayLayers = useMemo(() => {
@@ -105,7 +151,8 @@ const MapBigDataDemo: React.FC = () => {
     const aggSize = 800 * aggScale * Math.pow(2, 11 - zoom);
     switch (mode) {
       case 'none':
-        return [createScatterDisplayLayer(data)];
+        // 开启 R-Tree 过滤时只渲染视口内的点，否则渲染全部
+        return [createScatterDisplayLayer(viewportFilter ? filteredData : data)];
       case 'hexagon':
         return [createHexagonLayer(data, aggSize * 0.6)];
       case 'grid':
@@ -118,7 +165,7 @@ const MapBigDataDemo: React.FC = () => {
       default:
         return [createScatterDisplayLayer(data)];
     }
-  }, [mode, data, clusterData, zoom, aggScale]);
+  }, [mode, data, clusterData, zoom, aggScale, viewportFilter, filteredData]);
 
   // 挂载保存基准图层 / 卸载恢复基准图层（只在卸载时恢复一次）
   useEffect(() => {
@@ -163,6 +210,34 @@ const MapBigDataDemo: React.FC = () => {
             </button>
           ))}
         </div>
+
+        {/* R-Tree 视口过滤（仅不聚合模式，模块五空间索引演示） */}
+        {mode === 'none' && (
+          <div className="mb-3">
+            <button
+              onClick={() => setViewportFilter(!viewportFilter)}
+              className={`px-3 py-1.5 rounded cursor-pointer text-xs transition-colors ${
+                viewportFilter ? 'bg-emerald-500 text-white' : 'bg-white/15 hover:bg-white/25'
+              }`}
+            >
+              🌲 R-Tree 视口过滤 {viewportFilter ? '：开' : '：关'}
+            </button>
+            {viewportFilter && (
+              <div className="text-[11px] opacity-80 mt-1">
+                视口内 <strong className="text-emerald-400">{filteredData.length}</strong> /{' '}
+                {data.length} 点
+                {filteredData.length / data.length > 0.9 ? (
+                  <div className="text-amber-400 mt-0.5">
+                    👆 当前 zoom {zoom.toFixed(0)} 覆盖了几乎全部点——滚轮放大到{' '}
+                    <strong>15 级以上</strong>，数量才会骤降
+                  </div>
+                ) : (
+                  <div className="mt-0.5">拖动/缩放后数量自动更新（O(logN) 查询）</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 聚合半径滑块（仅点聚类模式） */}
         {mode === 'cluster' && (

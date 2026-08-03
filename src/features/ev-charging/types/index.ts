@@ -41,6 +41,29 @@ export interface RangeResult {
 /** 电量焦虑等级 */
 export type AnxietyLevel = 'normal' | 'warning' | 'critical';
 
+/** 智能充电建议的一个候选站（后端 /api/ev-range/auto-charge 返回） */
+export interface ChargingCandidate {
+  station: ChargingStation;
+  detourKm: number; // 绕路距离 km
+  distToStationKm: number; // 到站路程 km
+  timeToStationS: number; // 到站时间 s
+  arriveBatteryPercent: number; // 到站剩余电量 %
+  chargingMinutes: number; // 预计充电时长 min
+  batteryAtDestPercent: number; // 充到 80% 后到终点电量 %
+}
+
+/** 智能充电建议结果 */
+export interface ChargingSuggestion {
+  needCharging: boolean;
+  direct: {
+    distanceKm: number;
+    consumptionKwh: number;
+    remainingPercent: number;
+    insufficient: boolean;
+  };
+  candidates: ChargingCandidate[];
+}
+
 /** 车辆实时状态（后端 VehicleSimulator 通过 WebSocket 每秒推送） */
 export interface VehicleState {
   position: [number, number]; // [lng, lat]

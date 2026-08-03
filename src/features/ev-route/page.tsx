@@ -12,6 +12,7 @@ import maplibregl, { Map, Marker, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { RoutePoint, RouteResult } from './types';
 import { decodePolyline, fmtDist } from './utils';
+import { simplifyPath, describeSimplify } from '../../utils/simplify';
 import { useSimulation } from './hooks/useSimulation';
 import { RoutePanel } from './components/RoutePanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -51,6 +52,8 @@ export default function EVRoutePlanner() {
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** DP 抽稀后的说明文案（如 "318 → 82 点（保留 25.8%）"） */
+  const [simplifiedInfo, setSimplifiedInfo] = useState<string | null>(null);
 
   pickingModeRef.current = pickingMode;
 
@@ -108,9 +111,13 @@ export default function EVRoutePlanner() {
   }, [endPoint]);
 
   // 画路线（route-source / route-glow / route-line，id 与共享地图不冲突）
+  // 画之前用 Douglas-Peucker 抽稀：减少渲染点数、保留形状（模块四配套算法）
+  // 注意：抽稀只影响"画的线"，车辆模拟（useSimulation）仍用完整 routeCoords
   const drawRoute = useCallback((coords: [number, number][]) => {
     const m = mapRef.current;
     if (!m || coords.length < 2) return;
+    const simplified = simplifyPath(coords, 100); // 100 米阈值，保留形状
+    setSimplifiedInfo(describeSimplify(coords, 100));
     const doit = () => {
       ['route-line', 'route-glow'].forEach((id) => {
         if (m.getLayer(id)) m.removeLayer(id);
@@ -121,7 +128,7 @@ export default function EVRoutePlanner() {
         data: {
           type: 'Feature',
           properties: {},
-          geometry: { type: 'LineString', coordinates: coords },
+          geometry: { type: 'LineString', coordinates: simplified },
         },
       });
       m.addLayer({
@@ -251,6 +258,11 @@ export default function EVRoutePlanner() {
           {routeResult && routeResult.maneuvers.length > 0 && (
             <div className="absolute right-3 top-3 w-[280px] max-h-full overflow-y-auto bg-white/95 rounded-xl shadow-md p-3 text-sm pointer-events-auto">
               <h3 className="m-0 mb-2.5 text-[15px] font-bold">📋 导航指令</h3>
+              {simplifiedInfo && (
+                <div className="mb-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-600">
+                  🗜️ 路线已 DP 抽稀：{simplifiedInfo}
+                </div>
+              )}
               {routeResult.maneuvers.map((m, i) => (
                 <div
                   key={i}

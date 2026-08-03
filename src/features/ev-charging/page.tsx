@@ -12,9 +12,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { Marker } from 'maplibre-gl';
 import { useMapStore } from '../../store';
 import { decodePolyline } from '../ev-route/utils';
+import { createChargingLayer } from '../../layers/createChargingLayer';
 import { useVehicleSocket } from './hooks/useVehicleSocket';
 import ChargingPanel from './components/ChargingPanel';
 import SimControls from './components/SimControls';
+import StationDetail from './components/StationDetail';
+import ChargingSuggestion from './components/ChargingSuggestion';
+import type { ChargingStation, ChargingSuggestion as SuggestionData } from './types';
 
 const API_BASE = 'http://localhost:4000';
 
@@ -47,31 +51,140 @@ export default function EVCharging() {
   const [timeScale, setTimeScale] = useState(60);
   const carRef = useRef<Marker | null>(null);
 
-  /** 规划预设路线 */
-  const planRoute = useCallback(async (key: string) => {
-    const p = PRESETS[key];
-    if (!p) return;
-    setRouteLabel(p.label);
-    try {
-      const r = await fetch(`${API_BASE}/api/valhalla/route`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          locations: [
-            { lat: p.s[1], lon: p.s[0] },
-            { lat: p.e[1], lon: p.e[0] },
-          ],
-          costing: 'auto',
-        }),
-      });
-      const j = await r.json();
-      if (j.code !== 200) throw new Error(j.message);
-      setPath(decodePolyline(j.data.geometry));
-      setSimulating(false);
-    } catch (e: any) {
-      console.error('路线规划失败', e);
-    }
+  /* ---- 智能充电建议（模块三：电量不足时推荐沿途充电站）---- */
+  const [suggestion, setSuggestion] = useState<SuggestionData | null>(null);
+  const [selectedWaypoint, setSelectedWaypoint] = useState<ChargingStation | null>(null);
+  /** 当前规划路线的起终点（auto-charge 用） */
+  const [routeLocations, setRouteLocations] = useState<{ lat: number; lon: number }[] | null>(
+    null,
+  );
+  /** 基础路线名（选途经点后拼接显示，避免重复堆叠） */
+  const baseLabelRef = useRef('');
+  /** 焦虑模式是否已触发（电量 ≤20% 只触发一次） */
+  const anxietyTriggeredRef = useRef(false);
+
+  /** 检查电量是否不足 → 调后端拿充电建议 */
+  const checkCharging = useCallback(
+    async (locations: { lat: number; lon: number }[], batteryOverride?: number) => {
+      try {
+        const r = await fetch(`${API_BASE}/api/ev-range/auto-charge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            locations,
+            batteryLevel: batteryOverride ?? batteryLevel,
+            temperatureC: 25,
+            threshold: 20,
+          }),
+        });
+        const j = await r.json();
+        if (j.code === 200) setSuggestion(j.data.needCharging ? j.data : null);
+      } catch (e) {
+        console.error('充电建议获取失败', e);
+      }
+    },
+    [batteryLevel],
+  );
+
+  /* ---- 充电站图层（模块三：充电站 POI 显示）---- */
+  const [stations, setStations] = useState<ChargingStation[]>([]);
+  const [selectedStation, setSelectedStation] = useState<ChargingStation | null>(null);
+  /** 共享 overlay 的基准图层（进入保存 / 离开恢复） */
+  const baseRef = useRef<any[] | null>(null);
+
+  // 拉取真实充电站（后端从 OSM 转换的静态 JSON）
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/charging/stations`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && j.code === 200) setStations(j.data.stations);
+      })
+      .catch((e) => console.error('充电站加载失败', e));
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // 把充电站图层加到共享 overlay；卸载时恢复基准图层
+  useEffect(() => {
+    if (!mapReady || stations.length === 0) return;
+    const s = useMapStore.getState();
+    const overlay = s.deckOverlay;
+    if (!overlay) return;
+    if (!baseRef.current) baseRef.current = s.deckLayers ?? null;
+    const line = baseRef.current?.find((l: any) => l.id === 'line-layer');
+    const chargingLayer = createChargingLayer(stations, (st) => setSelectedStation(st));
+    overlay.setProps({ layers: line ? [line, chargingLayer] : [chargingLayer] });
+
+    return () => {
+      const o = useMapStore.getState().deckOverlay;
+      if (o && baseRef.current) o.setProps({ layers: baseRef.current });
+      baseRef.current = null;
+    };
+  }, [stations, mapReady]);
+
+  /** 规划预设路线 */
+  const planRoute = useCallback(
+    async (key: string) => {
+      const p = PRESETS[key];
+      if (!p) return;
+      baseLabelRef.current = p.label;
+      setRouteLabel(p.label);
+      setSelectedWaypoint(null);
+      setSuggestion(null);
+      // 记住起终点坐标（供 auto-charge 和途经点重路由用）
+      const locations = [
+        { lat: p.s[1], lon: p.s[0] },
+        { lat: p.e[1], lon: p.e[0] },
+      ];
+      setRouteLocations(locations);
+      try {
+        const r = await fetch(`${API_BASE}/api/valhalla/route`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locations, costing: 'auto' }),
+        });
+        const j = await r.json();
+        if (j.code !== 200) throw new Error(j.message);
+        setPath(decodePolyline(j.data.geometry));
+        setSimulating(false);
+        // 规划后检查电量是否不足 → 触发充电建议
+        checkCharging(locations);
+      } catch (e: any) {
+        console.error('路线规划失败', e);
+      }
+    },
+    [checkCharging],
+  );
+
+  /** 选充电站为途经点 → 重规划 origin→站→dest */
+  const selectWaypoint = useCallback(
+    async (station: ChargingStation) => {
+      if (!routeLocations) return;
+      setSelectedWaypoint(station);
+      setRouteLabel(`${baseLabelRef.current} → 经${station.name}`);
+      const locations = [
+        routeLocations[0],
+        { lat: station.position[1], lon: station.position[0] },
+        routeLocations[1],
+      ];
+      try {
+        const r = await fetch(`${API_BASE}/api/valhalla/route`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ locations, costing: 'auto' }),
+        });
+        const j = await r.json();
+        if (j.code !== 200) throw new Error(j.message);
+        setPath(decodePolyline(j.data.geometry));
+        setSimulating(false);
+      } catch (e: any) {
+        console.error('途经点路线失败', e);
+      }
+    },
+    [routeLocations],
+  );
 
   /** 把路线画到共享地图 */
   useEffect(() => {
@@ -130,6 +243,21 @@ export default function EVCharging() {
     if (vehicleState?.arrived) setSimulating(false);
   }, [vehicleState]);
 
+  /** 电量焦虑模式：模拟中电量 ≤20% 自动触发充电建议（只触发一次） */
+  useEffect(() => {
+    if (!vehicleState || !routeLocations) return;
+    const bl = vehicleState.batteryLevel;
+    if (bl <= 20) {
+      if (!anxietyTriggeredRef.current && !suggestion) {
+        anxietyTriggeredRef.current = true;
+        // 用实时电量调后端，推荐沿途充电站
+        checkCharging(routeLocations, bl);
+      }
+    } else {
+      anxietyTriggeredRef.current = false;
+    }
+  }, [vehicleState, routeLocations, suggestion, checkCharging]);
+
   /** 卸载清理：车辆 Marker + 路线图层 */
   useEffect(() => {
     return () => {
@@ -160,7 +288,7 @@ export default function EVCharging() {
 
   return (
     <div className="absolute inset-x-0 top-16 bottom-16 flex flex-col font-sans pointer-events-none">
-      <div className="pointer-events-auto px-4 space-y-2">
+      <div className="pointer-events-auto px-4 space-y-2 max-w-md">
         <SimControls
           connected={connected}
           hasPath={path.length > 0}
@@ -183,12 +311,27 @@ export default function EVCharging() {
           onTimeScale={setTimeScale}
         />
         <ChargingPanel state={vehicleState} connected={connected} />
+        {suggestion && (
+          <ChargingSuggestion
+            suggestion={suggestion}
+            selectedStationId={selectedWaypoint?.id ?? null}
+            onSelectWaypoint={selectWaypoint}
+          />
+        )}
       </div>
       <div className="flex-1 relative">
         {routeLabel && (
           <div className="absolute right-3 top-3 px-3 py-2 bg-white/90 rounded-lg shadow text-sm pointer-events-auto">
             🗺️ 路线：{routeLabel}
           </div>
+        )}
+
+        {/* 充电站详情卡（点击地图上的充电站弹出） */}
+        {selectedStation && (
+          <StationDetail
+            station={selectedStation}
+            onClose={() => setSelectedStation(null)}
+          />
         )}
       </div>
     </div>
